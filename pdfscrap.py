@@ -45,9 +45,6 @@ def load_stop_words(json_path):
 # Load the stop words
 stop_words = load_stop_words('stop_words.json')
 
-# Additional irrelevant phrases or keywords to skip
-irrelevant_keywords = {"sponsors", "provided support", "educational", "meeting", "session", "attendees", "lecture"}
-
 # Initialize the NameDataset
 name_dataset = NameDataset()
 
