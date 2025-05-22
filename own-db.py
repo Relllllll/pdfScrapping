@@ -3,69 +3,79 @@ import pandas as pd
 import csv
 import re
 
-# Load your custom full names list (first column should contain full names)
+# Load your custom full names list
 custom_names_df = pd.read_csv('names-data.csv')
 custom_full_names = set(custom_names_df.iloc[:, 0].dropna().str.strip().str.lower())
 
-# Path to your PDF file
-pdf_path = '..//SID_Dallas24_DigitalBook_r21.pdf'
-
-# Open the PDF
+# PDF path
+pdf_path = '../SID_Dallas24_DigitalBook_r21.pdf'
 pdf_document = fitz.open(pdf_path)
 
-# Regex to detect full name-like patterns (e.g., "John A Smith")
+# Regex for name patterns
 name_regex = re.compile(r'\b([A-Z][a-z]+(?:\s[A-Z][a-z]+){1,2})\b')
 
-# Recognized presentation roles
+# Allowed roles
 allowed_roles = {"Author", "Chair", "Director", "Faculty", "Moderator", "Presenter", "Speaker", "Participant"}
 
-# Output CSV
-with open('names_own-db.csv', mode='w', newline='', encoding='utf-8') as csv_file:
+# CSV setup
+with open('names_red_title_before.csv', mode='w', newline='', encoding='utf-8') as csv_file:
     csv_writer = csv.writer(csv_file)
     csv_writer.writerow(['First Name', 'Middle Name', 'Last Name', 'Affiliation', 'Presentation Type', 'Role', 'Title'])
 
     poster_presentation_found = False
-    last_row = None
-    start_page = 19  # Adjust if needed
+    start_page = 19
 
     for page_number in range(start_page, len(pdf_document)):
         page = pdf_document.load_page(page_number)
-        text = page.get_text("text")
+        blocks = page.get_text("dict")["blocks"]
 
-        if re.search(r'POSTER PRESENTATIONS', text, re.IGNORECASE):
-            poster_presentation_found = True
+        lines = []  # [(text, is_red)]
+        for block in blocks:
+            if 'lines' not in block:
+                continue
+            for line in block['lines']:
+                line_text = ''
+                is_red = False
+                for span in line['spans']:
+                    color = span['color']
+                    r = (color >> 16) & 0xFF
+                    g = (color >> 8) & 0xFF
+                    b = color & 0xFF
+                    text = span['text'].strip()
+                    if not text:
+                        continue
+                    if r > 150 and g < 100 and b < 100:
+                        is_red = True
+                    line_text += text + ' '
+                lines.append((line_text.strip(), is_red))
 
-        lines = text.split("\n")
+        last_red_text = ""  # Store the most recent red text seen before a name
         i = 0
         while i < len(lines):
-            line = lines[i].strip()
+            line, is_red = lines[i]
             if not line:
                 i += 1
                 continue
 
-            # Handle Moderator/Chair
+            if is_red:
+                last_red_text = line  # Store red title before name
+                i += 1
+                continue
+
             if line.startswith("Moderator:") or line.startswith("Chairs:"):
                 role = line.split(":")[0].strip()
-                name_line = lines[i + 1].strip() if i + 1 < len(lines) else ''
+                name_line = lines[i + 1][0] if i + 1 < len(lines) else ''
                 if name_line:
                     name_parts = name_line.split()
                     if len(name_parts) >= 2:
                         first = name_parts[0]
                         last = name_parts[-1]
                         middle = ' '.join(name_parts[1:-1]) if len(name_parts) > 2 else ''
-                        csv_writer.writerow([first, middle, last, '', '', role, ''])
+                        csv_writer.writerow([first, middle, last, '', '', role, last_red_text])
+                        last_red_text = ""  # Clear after using
                 i += 2
                 continue
 
-            # Handle Title
-            if line.startswith("Title:"):
-                title = line.replace("Title:", "").strip()
-                if last_row and not last_row[-1]:
-                    last_row[-1] = title
-                i += 1
-                continue
-
-            # Check for names
             match = name_regex.match(line)
             if match:
                 full_name = match.group(1)
@@ -79,9 +89,10 @@ with open('names_own-db.csv', mode='w', newline='', encoding='utf-8') as csv_fil
                     i += 1
                     continue
 
+                # Check for role/affiliation line after the name
                 affiliation = ''
                 if i + 1 < len(lines):
-                    next_line = lines[i + 1].strip()
+                    next_line = lines[i + 1][0]
                     if next_line in allowed_roles:
                         affiliation = next_line
                         i += 1
@@ -89,14 +100,12 @@ with open('names_own-db.csv', mode='w', newline='', encoding='utf-8') as csv_fil
                 presentation_type = 'Poster Presentation' if poster_presentation_found else 'Oral Presentation'
 
                 if len(name_parts) == 2:
-                    last_row = [name_parts[0], '', name_parts[1], affiliation, presentation_type, '', '']
+                    csv_writer.writerow([name_parts[0], '', name_parts[1], affiliation, presentation_type, '', last_red_text])
                 elif len(name_parts) == 3:
-                    last_row = [name_parts[0], name_parts[1], name_parts[2], affiliation, presentation_type, '', '']
+                    csv_writer.writerow([name_parts[0], name_parts[1], name_parts[2], affiliation, presentation_type, '', last_red_text])
 
-            if last_row and (i + 1 >= len(lines) or not lines[i + 1].startswith("Title:")):
-                csv_writer.writerow(last_row)
-                last_row = None
+                last_red_text = ""  # Clear after assigning it
 
             i += 1
 
-print("✅ Done! Output written to 'names_own-db.csv'")
+print("✅ Done! Output written to 'names_red_title_before.csv'")
